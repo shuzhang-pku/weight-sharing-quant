@@ -2,6 +2,7 @@ import torch
 import torch.nn as nn
 from torch import Tensor
 from typing import Any, Callable, List, Optional, Type, Union
+import random
 
 
 from qfa.layers import IdentityLayer
@@ -141,9 +142,12 @@ class Bottleneck(nn.Module):
 
         return out
     
+    def get_active_subnet():
+        pass
+    
 
 
-class ResNet(nn.Module):
+class QResNet(nn.Module):
     def __init__(
         self,
         block: Type[Union[BasicBlock, Bottleneck]],
@@ -157,6 +161,18 @@ class ResNet(nn.Module):
         bits_list: List[int] = [2,3,4,32]
     ) -> None:
         super().__init__()
+
+        #mix-precision-specific
+        self.flops_table = FLOPsTable()
+        self.bits_list = int2list(bits_list, 1)
+        self.bits_list.sort()
+        self.quantizers = []
+        self.quantizer_dict = {}
+        for n, m in self.named_modules():
+            if type(m) in [DynamicWeightQuantizer, DynamicActivationQuantizer]:
+                self.quantizers.append(m)
+                self.quantizer_dict[n] = m
+
 
         if norm_layer is None:
             norm_layer = nn.BatchNorm2d
@@ -175,16 +191,16 @@ class ResNet(nn.Module):
             )
         self.groups = groups
         self.base_width = width_per_group
-        self.conv1 = nn.Conv2d(3, self.inplanes, kernel_size=7, stride=2, padding=3, bias=False)
-        self.bn1 = norm_layer(self.inplanes)
-        self.relu = nn.ReLU(inplace=True)
+        self.first_conv = DynamicQConvLayer(3, self.inplanes, kernel_size= 7 ,stride=2,use_bn=True, act_func='relu', bits_list= bits_list)
+
         self.maxpool = nn.MaxPool2d(kernel_size=3, stride=2, padding=1)
         self.layer1 = self._make_layer(block, 64, layers[0])
         self.layer2 = self._make_layer(block, 128, layers[1], stride=2, dilate=replace_stride_with_dilation[0])
         self.layer3 = self._make_layer(block, 256, layers[2], stride=2, dilate=replace_stride_with_dilation[1])
         self.layer4 = self._make_layer(block, 512, layers[3], stride=2, dilate=replace_stride_with_dilation[2])
+        self.blocks=[self.layer1, self.layer2, self.layer3, self.layer4]
         self.avgpool = nn.AdaptiveAvgPool2d((1, 1))
-        self.fc = nn.Linear(512 * block.expansion, num_classes)
+        self.fc = DynamicQLinearLayer(in_features_list=512 * block.expansion, out_features_list=num_classes, bits_list=bits_list)
 
         for m in self.modules():
             if isinstance(m, nn.Conv2d):
@@ -246,9 +262,8 @@ class ResNet(nn.Module):
 
     def _forward_impl(self, x: Tensor) -> Tensor:
         # See note [TorchScript super()]
-        x = self.conv1(x)
-        x = self.bn1(x)
-        x = self.relu(x)
+        x = self.first_conv(x)
+
         x = self.maxpool(x)
 
         x = self.layer1(x)
@@ -264,15 +279,270 @@ class ResNet(nn.Module):
 
     def forward(self, x: Tensor) -> Tensor:
         return self._forward_impl(x)
+    
+    @staticmethod
+    def name():
+        return 'QResNet'
+    
+    @property
+    def module_str(self):
+        #todo: module str of bit
+        '''
+        _str = self.first_conv.module_str + '\n'
+        _str += self.blocks[0].module_str + '\n'
+
+        for stage_id, block_idx in enumerate(self.block_group_info):
+            depth = self.runtime_depth[stage_id]
+            active_idx = block_idx[:depth]
+            for idx in active_idx:
+                _str += self.blocks[idx].module_str + '\n'
+
+        _str += self.final_expand_layer.module_str + '\n'
+        _str += self.feature_mix_layer.module_str + '\n'
+        _str += self.classifier.module_str + '\n'
+        '''
+        return 'QResNet(need mix-precision informantion in detail)'
+    
+
+    def load_state_dict(self, src_model_dict):
+        self.load_weights_from_float_net(src_model_dict)
+
+    def load_weights_from_float_net(self, src_model_dict):
+        model_dict = self.state_dict()
+        for key in src_model_dict:
+            if key in model_dict:
+                new_key = key
+            elif 'first_conv' in key or 'blocks.0' in key or 'final_expand_layer' in key or 'feature_mix_layer' in key:
+                rep_list = [
+                    ('conv.weight', 'conv.conv.weight'),
+                    ('bn.weight', 'conv.gamma'),
+                    ('bn.bias', 'conv.beta'),
+                    ('bn', 'conv')
+                ]
+                new_key = key
+                for v1, v2 in rep_list:
+                    new_key = new_key.replace(v1, v2)
+            elif 'blocks' in key:
+                rep_list = [
+                    ('bn.bn.weight', 'conv.gamma'),
+                    ('bn.bn.bias', 'conv.beta'),
+                    ('bn.bn', 'conv')
+                ]
+                new_key = key
+                for v1, v2 in rep_list:
+                    new_key = new_key.replace(v1, v2)
+            elif 'classifier' in key:
+                new_key = key.replace('.linear.', '.linear.linear.')
+            else:
+                raise ValueError(key)
+            if new_key not in model_dict:
+                assert 'w_q' in key, '%s' % new_key
+            else:
+                model_dict[new_key] = src_model_dict[key]
+            # assert new_key in model_dict, '%s' % new_key
+            # model_dict[new_key] = src_model_dict[key]
+        super(QResNet, self).load_state_dict(model_dict)
+
+
+
+
+    def override_quantizer(self):
+        for k, q in self.quantizer_dict.items():
+            if 'first_conv' in k:
+                q.active_bit = 32
+            if 'fc' in k:
+                if q.active_bit < 8:
+                    q.active_bit = 8
+
+        bit_list = [b for b in self.bits_list if b != 32]
+        for n, m in self.named_modules():
+            if isinstance(m, DynamicPointQConv2d):
+                w_bits = m.w_quantizer.active_bit
+                a_bits = m.a_quantizer.active_bit
+                if w_bits != a_bits and 32 in [w_bits, a_bits]:
+                    if random.random() < 0.2:
+                        m.w_quantizer.active_bit = 32
+                        m.a_quantizer.active_bit = 32
+                    else:
+                        if m.w_quantizer.active_bit == 32:
+                            m.w_quantizer.active_bit = random.choice(bit_list)
+                        if m.a_quantizer.active_bit == 32:
+                            m.a_quantizer.active_bit = random.choice(bit_list)
+
+            if isinstance(m, DynamicSeparableQConv2d):
+                for ks in m.w_quantizers.keys():
+                    w_bits = m.w_quantizers[str(ks)].active_bit
+                    a_bits = m.a_quantizers[str(ks)].active_bit
+                    if w_bits != a_bits and 32 in [w_bits, a_bits]:
+                        if random.random() < 0.2:
+                            m.w_quantizers[str(ks)].active_bit = 32
+                            m.a_quantizers[str(ks)].active_bit = 32
+                        else:
+                            if m.w_quantizers[str(ks)].active_bit == 32:
+                                m.w_quantizers[str(ks)].active_bit = random.choice(bit_list)
+                            if m.a_quantizers[str(ks)].active_bit == 32:
+                                m.a_quantizers[str(ks)].active_bit = random.choice(bit_list)
+
+            if isinstance(m, DynamicQLinear):
+                w_bits = m.w_quantizer.active_bit
+                a_bits = m.a_quantizer.active_bit
+                if w_bits != a_bits and 32 in [w_bits, a_bits]:
+                    if random.random() < 0.666:
+                        m.w_quantizer.active_bit = 32
+                        m.a_quantizer.active_bit = 32
+                    else:
+                        m.w_quantizer.active_bit = 8
+                        m.a_quantizer.active_bit = 8
+
+        bits_list = [q.active_bit for q in self.quantizers]
+        return bits_list
+
+    def set_max_net(self):
+        return self.set_sandwich_subnet('max')
+    
+    def set_active_subnet(self, b=None):
+        bits = int2list(b, len(self.quantizers))
+
+        for i, q in enumerate(self.quantizers):
+            if bits[i] is not None:
+                q.active_bit = bits[i]
+
+        return self.override_quantizer()
+    
+    def set_sandwich_subnet(self, mode):
+        assert mode in ['min', 'max']
+        aggregate = min if mode == 'min' else max
+        bits_setting = random.choice(self.bits_list)
+
+        bits_setting = self.set_active_subnet( bits_setting)
+        return {
+
+            'b': bits_setting,
+        }
+
+    
+
+    def set_constraint(self, include_list, constraint_type='depth'):
+        if constraint_type == 'bits':
+            self.__dict__['_bits_include_list'] = include_list.copy()
+        else:
+            raise NotImplementedError
+
+    def clear_constraint(self):
+        self.__dict__['_bits_include_list'] = None
+
+    #todo
+    def get_pareto_config(self, res):
+
+        bits_setting = []
+        for i, q in enumerate(self.quantizers):
+            bits_setting.append(q.active_bit)
+
+        pareto_cfg = {
+            'b': bits_setting,
+        }
+
+        bs = [[self.first_conv.conv.w_quantizer.active_bit, self.first_conv.conv.a_quantizer.active_bit]]
+        for block in self.blocks:
+            inv_w, inv_a = 4, 4
+            inv = block.mobile_inverted_conv.inverted_bottleneck
+            if inv:
+                inv_w = inv.conv.w_quantizer.active_bit
+                inv_a = inv.conv.a_quantizer.active_bit
+            dep = block.mobile_inverted_conv.depth_conv.conv
+            kernel_size = dep.active_kernel_size
+            dep_w = dep.w_quantizers[str(kernel_size)].active_bit
+            dep_a = dep.a_quantizers[str(kernel_size)].active_bit
+            pw = block.mobile_inverted_conv.point_linear.conv
+            pw_w = pw.w_quantizer.active_bit
+            pw_a = pw.a_quantizer.active_bit
+            bs.append([inv_w, inv_a, dep_w, dep_a, pw_w, pw_a])
+        bs += [
+            [self.final_expand_layer.conv.w_quantizer.active_bit,
+             self.final_expand_layer.conv.a_quantizer.active_bit],
+            [self.feature_mix_layer.conv.w_quantizer.active_bit,
+             self.feature_mix_layer.conv.a_quantizer.active_bit],
+            [self.classifier.linear.w_quantizer.active_bit,
+             self.classifier.linear.a_quantizer.active_bit],
+        ]
+
+        pareto_cfg['bs'] = bs
+
+        return pareto_cfg
+
+
+
+    def sample_active_subnet(self, res=None, subnet_seed=None):
+        if subnet_seed is not None:
+            random.seed(subnet_seed)
+
+        return self.sample_active_subnet_helper()
+
+    def sample_active_subnet_helper(self):
+        bits_candidates = self.bits_list if self.__dict__.get('_bits_include_list', None) is None else \
+            self.__dict__['_bits_include_list']
+
+        # sample bits
+        bits_setting = []
+        if not isinstance(bits_candidates[0], list):
+            bits_candidates = [bits_candidates for _ in range(len(self.quantizers))]
+        for b_set in bits_candidates:
+            b = random.choice(b_set)
+            bits_setting.append(b)
+
+        bits_setting = self.set_active_subnet(bits_setting)
+
+        return {
+            'b': bits_setting,
+        }
+
+    #todo
+    def get_active_subnet(self, preserve_weight=True):
+        first_conv = self.first_conv.get_active_subnet(in_channel=3, preserve_weight=preserve_weight)
+        blocks = [MobileInvertedResidualBlock(
+            self.blocks[0].mobile_inverted_conv.get_active_subnet(
+                in_channel=self.first_conv.active_out_channel,
+                preserve_weight=preserve_weight),
+            copy.deepcopy(self.blocks[0].shortcut))]
+
+        final_expand_layer = self.final_expand_layer.get_active_subnet(
+            in_channel=self.blocks[-1].mobile_inverted_conv.active_out_channel, preserve_weight=preserve_weight)
+        feature_mix_layer = self.feature_mix_layer.get_active_subnet(
+            in_channel=self.final_expand_layer.active_out_channel, preserve_weight=preserve_weight)
+        classifier = self.classifier.get_active_subnet(
+            in_features=self.feature_mix_layer.active_out_channel, preserve_weight=preserve_weight)
+
+        input_channel = blocks[0].mobile_inverted_conv.out_channels
+        # blocks
+        for stage_id, block_idx in enumerate(self.block_group_info):
+            depth = self.runtime_depth[stage_id]
+            active_idx = block_idx[:depth]
+            stage_blocks = []
+            for idx in active_idx:
+                stage_blocks.append(
+                    MobileInvertedResidualBlock(
+                        self.blocks[idx].mobile_inverted_conv.get_active_subnet(in_channel=input_channel,
+                                                                                preserve_weight=preserve_weight),
+                        copy.deepcopy(self.blocks[idx].shortcut)
+                    )
+                )
+                input_channel = stage_blocks[-1].mobile_inverted_conv.out_channels
+            blocks += stage_blocks
+
+        _subnet = MobileNetV3(first_conv, blocks, final_expand_layer, feature_mix_layer, classifier)
+        return _subnet
+
+
+
 
 def _resnet(
     block: Type[Union[BasicBlock, Bottleneck]],
     layers: List[int],
     bits_list: List[int] = [2,3,4,32]
-) -> ResNet:
+) -> QResNet:
 
 
-    model = ResNet(block, layers, bits_list = bits_list)
+    model = QResNet(block, layers, bits_list = bits_list)
 
 
 
@@ -284,7 +554,7 @@ def resnet34(bits_list: List[int] = [2,3,4,32]):
 
 
 
-def resnet50(bits_list: List[int] = [2,3,4,32]) -> ResNet:
+def resnet50(bits_list: List[int] = [2,3,4,32]) -> QResNet:
  
 
 
