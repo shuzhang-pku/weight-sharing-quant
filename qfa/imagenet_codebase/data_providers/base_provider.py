@@ -14,7 +14,7 @@ import os
 import math
 
 import torch
-from torch._six import container_abcs
+import collections.abc as container_abcs
 import torch.nn.functional as TF
 import torchvision.transforms.functional as F
 import torchvision.transforms as transforms

@@ -14,14 +14,15 @@ from torch._C import _set_worker_signal_handlers, _set_worker_pids, \
     _remove_worker_pids, _error_if_any_worker_fails
 from torch.utils.data import SequentialSampler, RandomSampler, BatchSampler
 import signal
-from torch._six import container_abcs
+import collections.abc as container_abcs
 import re
 import sys
 import threading
 import traceback
 import os
 import atexit
-from torch._six import string_classes, int_classes
+string_classes = str
+int_classes = int
 
 from qfa.imagenet_codebase.data_providers.base_provider import LoaderConfig
 
