@@ -205,6 +205,15 @@ def train_one_epoch(run_manager, args, epoch, warmup_epochs=0, warmup_lr=0):
                 ) for key, val in subnet_settings.items()])
 
                 output = run_manager.net(images[batch_idx])
+                print('output')
+                print(output.max())
+                print(output.min())
+                print('label')
+                print(labels.max())
+                print(labels.min())
+                print('soft_label')
+                print(soft_label.max())
+                print(soft_label.min())
                 if args.kd_ratio == 0:
                     loss = run_manager.train_criterion(output, labels)
                     loss_type = 'ce'
@@ -323,7 +332,7 @@ def supporting_elastic_quantize(train_func, run_manager, args, validate_func_dic
         '-' * 30 + 'Supporting Bitwidth: %d -> %d' %
         (bits_list[0], bits_list[-1]) + '-' * 30, 'valid'
     )
-
+    '''
     # add expand list constraints
     validate_func_dict['bits_list'] = sorted(bits_list)
     val_loss, val_metric_dict, _val_log = validate(run_manager, **validate_func_dict)
@@ -332,7 +341,7 @@ def supporting_elastic_quantize(train_func, run_manager, args, validate_func_dic
         val_log += ', Train {name} {value:.3f}\t'.format(name=k, value=v)
     val_log += _val_log
     run_manager.write_log(val_log, 'valid')
-
+    '''
     # train
     train_func(
         run_manager, args,

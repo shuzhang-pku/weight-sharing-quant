@@ -1,3 +1,6 @@
 Loaded init from ofa_mbv3_d234_e346_k357_w1.2
 ------------------------------Supporting Bitwidth: 2 -> 32------------------------------
-Val loss 7.367	, Train target_metric 0.093	, Train acc1 0.093	, Train acc5 0.354	target_metric (0.010), target_metric (0.020), target_metric (0.060), target_metric (0.040), target_metric (0.080), target_metric (0.010), target_metric (0.180), target_metric (0.000), target_metric (0.050), target_metric (0.100), target_metric (0.060), target_metric (0.010), target_metric (0.070), target_metric (0.000), target_metric (0.060), target_metric (0.030), target_metric (0.090), target_metric (0.010), target_metric (0.170), target_metric (0.240), target_metric (0.170), target_metric (0.270), target_metric (0.180), target_metric (0.310), 
+Loaded init from ofa_mbv3_d234_e346_k357_w1.2
+------------------------------Supporting Bitwidth: 2 -> 32------------------------------
+Loaded init from ofa_mbv3_d234_e346_k357_w1.2
+------------------------------Supporting Bitwidth: 2 -> 32------------------------------

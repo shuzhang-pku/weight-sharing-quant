@@ -19,7 +19,7 @@ import torch
 
 from qfa.elastic_nn.modules.dynamic_op import DynamicSeparableConv2d
 DynamicSeparableConv2d.KERNEL_TRANSFORM_MODE = 1
-from qfa.elastic_nn.networks import OFAMobileNetV3, QFAMobileNetV3
+from qfa.elastic_nn.networks import OFAMobileNetV3, QFAMobileNetV3, QResNet
 from qfa.imagenet_codebase.run_manager import DistributedImageNetRunConfig
 from qfa.imagenet_codebase.run_manager.distributed_run_manager import DistributedRunManager
 from qfa.imagenet_codebase.data_providers.base_provider import LoaderConfig

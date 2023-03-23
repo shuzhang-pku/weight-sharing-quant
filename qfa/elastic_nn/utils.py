@@ -198,11 +198,11 @@ def set_activation_statistics(dynamic_net, data_loader=None, distributed=False):
             for images, labels in data_loader:
                 images = images.to(get_net_device(dynamic_net))
                 for batch_idx in ['min', 'max']:
-                    for ks in dynamic_net.ks_list:
-                        for bit in dynamic_net.bits_list:
-                            dynamic_net.set_sandwich_subnet(batch_idx)
-                            dynamic_net.set_active_subnet(ks=ks, b=bit)
-                            dynamic_net(images)
+                    #for ks in dynamic_net.ks_list:
+                    for bit in dynamic_net.bits_list:
+                        dynamic_net.set_sandwich_subnet(batch_idx)
+                        dynamic_net.set_active_subnet(b=bit)
+                        dynamic_net(images)
                 for _ in range(6):
                     dynamic_net.sample_active_subnet()
                     dynamic_net(images)

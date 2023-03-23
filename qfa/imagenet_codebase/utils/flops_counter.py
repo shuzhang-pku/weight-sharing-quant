@@ -15,7 +15,7 @@ import numpy as np
 class FLOPsTable:
     def __init__(self, multiplier=1.2):
         self.multiplier = multiplier
-        self.efficiency_dict = np.load('lut_flops_%.2f.npy' % multiplier, allow_pickle=True).item()
+        #self.efficiency_dict = np.load('lut_flops_%.2f.npy' % multiplier, allow_pickle=True).item()
 
     def predict_efficiency(self, sample):
         input_size = sample.get('r', [224])
