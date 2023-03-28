@@ -98,7 +98,7 @@ trainloader = torch.utils.data.DataLoader(trainset, batch_size=128, shuffle=True
 testset = torchvision.datasets.CIFAR100(root='/home/shuzhangzhong/dataset', train=False, download=True, transform=transform)
 testloader = torch.utils.data.DataLoader(testset, batch_size=128, shuffle=False)
 
-net = qresnet50()
+net = qresnet18()
 teacher = resnet50()
 fc_inputs = teacher.fc.in_features 
 teacher.fc = nn.Sequential(        
@@ -108,7 +108,7 @@ teacher.fc = nn.Sequential(
 net = net.to('cuda')
 #teacher = teacher.to('cuda')
 set_activation_statistics(net)
-net.load_state_dict(torch.load('resnet50.pth'))
+#net.load_state_dict(torch.load('resnet50.pth'))
 teacher.load_state_dict(torch.load('/home/shuzhangzhong/weight-sharing-quant/resnet50.pth'))
 teacher.eval()
 
@@ -124,9 +124,10 @@ def train(epoch):
     for batch_idx, (inputs, targets) in enumerate(trainloader):
         optimizer.zero_grad()
         inputs, targets = inputs.to('cuda'), targets.to('cuda')
+        output = net(inputs) 
         #with torch.no_grad():
         #    soft_label = teacher(inputs)
-        output = net(inputs) 
+        #loss = cross_entropy_loss_with_soft_target(output, soft_label)
         loss = nn.CrossEntropyLoss()(output,targets)
         loss.backward()
         optimizer.step()

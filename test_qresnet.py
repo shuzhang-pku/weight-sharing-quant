@@ -30,6 +30,7 @@ transforms.Normalize([0.485, 0.456, 0.406],[0.229, 0.224, 0.225])
 
 trainset = torchvision.datasets.CIFAR100(root='/home/shuzhangzhong/dataset', train=True, download=True, transform=transform)
 trainloader = torch.utils.data.DataLoader(trainset, batch_size=200, shuffle=True)
+
 testset = torchvision.datasets.CIFAR100(root='/home/shuzhangzhong/dataset', train=False, download=True, transform=transform)
 testloader = torch.utils.data.DataLoader(testset, batch_size=200, shuffle=False)
 

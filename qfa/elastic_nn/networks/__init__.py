@@ -9,4 +9,5 @@
 
 from .ofa_mbv3 import OFAMobileNetV3
 from .qfa_mbv3 import QFAMobileNetV3
-from .qresnet import QResNet,qresnet50
+from .qresnet import QResNet,qresnet50,qresnet18
+from .resnet import __all__
