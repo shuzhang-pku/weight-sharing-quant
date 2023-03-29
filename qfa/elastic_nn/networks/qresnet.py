@@ -11,282 +11,88 @@ from qfa.elastic_nn.modules.dynamic_q_layers import *
 from qfa.imagenet_codebase.networks.mobilenet_v3 import MobileNetV3, MobileInvertedResidualBlock
 from qfa.imagenet_codebase.utils import FLOPsTable
 
-
-def conv3x3(in_planes: int, out_planes: int, stride: int = 1, groups: int = 1, dilation: int = 1) -> nn.Conv2d:
-    """3x3 convolution with padding"""
-    return nn.Conv2d(
-        in_planes,
-        out_planes,
-        kernel_size=3,
-        stride=stride,
-        padding=dilation,
-        groups=groups,
-        bias=False,
-        dilation=dilation,
-    )
-
-
-def conv1x1(in_planes: int, out_planes: int, stride: int = 1) -> nn.Conv2d:
-    """1x1 convolution"""
-    return nn.Conv2d(in_planes, out_planes, kernel_size=1, stride=stride, bias=False)
-
-
 class BasicBlock(nn.Module):
+    """Basic Block for resnet 18 and resnet 34
+
+    """
+
+    #BasicBlock and BottleNeck block
+    #have different output size
+    #we use class attribute expansion
+    #to distinct
     expansion = 1
 
-    def __init__(
-        self,
-        inplanes,
-        planes,
-        stride=1,
-        downsample=None,
-        groups=1,
-        base_width=64,
-        dilation=1,
-        norm_layer=None,
-        use_bn=True,
-        use_relu=True,
-        skip_last_relu=False,
-        use_dual_skip=False,
-        post_res_bn=False,
-        bits_list=[2,3,4,32]
-    ):
-        super(BasicBlock, self).__init__()
-        if norm_layer is None:
-            norm_layer = nn.BatchNorm2d
-        if groups != 1 or base_width != 64:
-            raise ValueError("BasicBlock only supports groups=1 and base_width=64")
-        if dilation > 1:
-            raise NotImplementedError("Dilation > 1 not supported in BasicBlock")
-        # Both self.conv1 and self.downsample layers downsample the input when stride != 1
+    def __init__(self, in_channels, out_channels, stride=1):
+        super().__init__()
 
-
-        self.conv1 = DynamicQConvLayer(
-            in_channel_list = inplanes, out_channel_list=planes, bits_list=bits_list,
-            kernel_size=3, stride=stride, dilation=dilation, use_bn=use_bn, act_func='relu', signed= True
+        #residual function
+        self.residual_function = nn.Sequential(
+            DynamicQConvLayer(in_channel_list=in_channels, out_channel_list=out_channels
+                              kernel_size=3, stride=stride, use_bn=use_bn, act_func='relu'),
+            DynamicQConvLayer(in_channel_list=out_channels, out_channel_list=out_channels * BasicBlock.expansion
+                              kernel_size=3, use_bn=use_bn, act_func=None)
         )
 
-        self.conv2 = DynamicQConvLayer(
-            in_channel_list = planes, out_channel_list=planes, bits_list=bits_list,
-            kernel_size=3,  use_bn=use_bn, act_func=None, signed= True
-        )
-        self.relu = nn.ReLU(inplace=True)
-        self.downsample = downsample
-        self.stride = stride
-        self.use_dual_skip = use_dual_skip
-        self.post_res_bn = post_res_bn
+        #shortcut
+        self.shortcut = nn.Sequential()
 
-        # self.act_quant_op1 = TernaryFakeQuantize(is_trainable_weight=True)
-        # self.act_quant_op2 = TernaryFakeQuantize(is_trainable_weight=True)
+        #the shortcut output dimension is not the same with residual function
+        #use 1*1 convolution to match the dimension
+        if stride != 1 or in_channels != BasicBlock.expansion * out_channels:
+            self.shortcut = DynamicQConvLayer(in_channel_list=in_channels, out_channel_list=out_channels * BasicBlock.expansion,
+                              kernel_size=1, stride=stride, use_bn=True, act_func=None)
 
     def forward(self, x):
-        identity = x
-
-        out = x
-        out = self.conv1(out)
-
-        if self.downsample is not None:
-            identity = self.downsample(x)
-
-        out = self.relu1(out)
-
-        out = self.conv2(out)
-
-        out += identity
-
-        out = self.relu(out)
-
-        return out
+        return nn.ReLU(inplace=True)(self.residual_function(x) + self.shortcut(x))
 
 class Bottleneck(nn.Module):
-    # Bottleneck in torchvision places the stride for downsampling at 3x3 convolution(self.conv2)
-    # while original implementation places the stride at the first 1x1 convolution(self.conv1)
-    # according to "Deep residual learning for image recognition" https://arxiv.org/abs/1512.03385.
-    # This variant is also known as ResNet V1.5 and improves accuracy according to
-    # https://ngc.nvidia.com/catalog/model-scripts/nvidia:resnet_50_v1_5_for_pytorch.
+    """Residual block for resnet over 50 layers
 
-    expansion: int = 4
-
-    def __init__(
-        self,
-        inplanes: int,
-        planes: int,
-        stride: int = 1,
-        downsample: Optional[nn.Module] = None,
-        use_bn: bool = True,
-        groups: int = 1,
-        base_width: int = 64,
-        dilation: int = 1,
-        norm_layer: Optional[Callable[..., nn.Module]] = None,
-        bits_list: List[int] = [2,3,4,32]
-    ) -> None:
+    """
+    expansion = 4
+    def __init__(self, in_channels, out_channels, stride=1):
         super().__init__()
-        if norm_layer is None:
-            norm_layer = nn.BatchNorm2d
-        width = int(planes * (base_width / 64.0)) * groups
-        # Both self.conv2 and self.downsample layers downsample the input when stride != 1
-        self.conv1 = DynamicQConvLayer(
-            in_channel_list = inplanes, out_channel_list=width, bits_list=bits_list,
-            kernel_size=1, dilation = dilation,use_bn=True, act_func='relu', signed= True
-        )
-        self.conv2 = DynamicQConvLayer(
-            in_channel_list = width, out_channel_list=width, bits_list=bits_list,
-            kernel_size=3, stride=stride,dilation=dilation, use_bn=True, act_func='relu', signed= True
+        self.residual_function = nn.Sequential(
+            nn.Conv2d(in_channels, out_channels, kernel_size=1, bias=False),
+            nn.BatchNorm2d(out_channels),
+            nn.ReLU(inplace=True),
+            nn.Conv2d(out_channels, out_channels, stride=stride, kernel_size=3, padding=1, bias=False),
+            nn.BatchNorm2d(out_channels),
+            nn.ReLU(inplace=True),
+            nn.Conv2d(out_channels, out_channels * Bottleneck.expansion, kernel_size=1, bias=False),
+            nn.BatchNorm2d(out_channels * Bottleneck.expansion),
         )
 
-        self.conv3 = DynamicQConvLayer(
-            in_channel_list = width, out_channel_list=planes * self.expansion, bits_list=bits_list,
-            kernel_size=1, dilation=dilation,use_bn=True, act_func=None, signed= True
-        )
+        self.shortcut = nn.Sequential()
 
-        self.relu = nn.ReLU(inplace=True)
-        self.downsample = downsample
-        self.stride = stride
+        if stride != 1 or in_channels != out_channels * Bottleneck.expansion:
+            self.shortcut = nn.Sequential(
+                nn.Conv2d(in_channels, out_channels * Bottleneck.expansion, stride=stride, kernel_size=1, bias=False),
+                nn.BatchNorm2d(out_channels * Bottleneck.expansion)
+            )
 
-    def forward(self, x: Tensor) -> Tensor:
-        identity = x
-
-        out = self.conv1(x)
-
-        out = self.conv2(out)
-
-        out = self.conv3(out)
-
-
-        if self.downsample is not None:
-            identity = self.downsample(x)
-
-        out += identity
-        out = self.relu(out)
-
-        return out
+    def forward(self, x):
+        return nn.ReLU(inplace=True)(self.residual_function(x) + self.shortcut(x))
     
-    def get_active_subnet():
-        pass
-    
-
 
 class QResNet(nn.Module):
-    def __init__(
-        self,
-        block,
-        layers,
-        num_classes=10,
-        zero_init_residual=False,
-        groups=1,
-        width_per_group=64,
-        replace_stride_with_dilation=None,
-        norm_layer=None,
-        use_bn=True,
-        use_relu=True,
-        skip_last_relu=False,
-        down_block_type="default",
-        use_dual_skip=False,
-        post_res_bn=False,
-        bits_list: List[int] = [2,3,4,32],
-        **kwargs,
-    ):
-        super(QResNet, self).__init__()
-        if norm_layer is None:
-            norm_layer = nn.BatchNorm2d
-        self._norm_layer = norm_layer
+    def __init__(self, block, num_block, num_classes=100, bits_list: List[int] = [2,3,4,32]):
+        super().__init__()
 
-        self.inplanes = 64
-        self.dilation = 1
-        if replace_stride_with_dilation is None:
-            # each element in the tuple indicates if we should replace
-            # the 2x2 stride with a dilated convolution instead
-            replace_stride_with_dilation = [False, False, False]
-        if len(replace_stride_with_dilation) != 3:
-            raise ValueError(
-                "replace_stride_with_dilation should be None "
-                "or a 3-element tuple, got {}".format(replace_stride_with_dilation)
-            )
-        self.groups = groups
-        self.base_width = width_per_group
-        self.post_res_bn = post_res_bn
+        self.in_channels = 64
 
-        # CIFAR10: kernel_size 7 -> 3, stride 2 -> 1, padding 3->1
-        if num_classes == 10 or num_classes == 100:
-            self.conv1 = nn.Conv2d(
-                3, self.inplanes, kernel_size=3, stride=1, padding=1, bias=False
-            )
-            self.first_conv = DynamicQConvLayer(3, self.inplanes, kernel_size= 3 ,stride=1,use_bn=True, act_func='relu', bits_list= bits_list)
-            self.maxpool = nn.Identity()
-        else:
-            self.first_conv = DynamicQConvLayer(3, self.inplanes, kernel_size= 7 ,stride=2,use_bn=True, act_func='relu', bits_list= bits_list)
-            self.maxpool = nn.MaxPool2d(kernel_size=3, stride=2, padding=1)
-        # END
-
-        # self.bn1 = norm_layer(self.inplanes) if use_bn else nn.Identity()
-
-        self.relu = (
-            nn.ReLU(inplace=True) if use_relu else nn.PReLU(self.inplanes)
-        )
-        self.layer1 = self._make_layer(
-            block, 64, layers[0], use_bn=use_bn, use_relu=use_relu,
-            skip_last_relu=skip_last_relu,
-            down_block_type=down_block_type,
-            use_dual_skip=use_dual_skip,
-            post_res_bn=post_res_bn,
-        )
-        self.layer2 = self._make_layer(
-            block, 128, layers[1],
-            stride=2,
-            dilate=replace_stride_with_dilation[0],
-            use_bn=use_bn,
-            use_relu=use_relu,
-            skip_last_relu=skip_last_relu,
-            down_block_type=down_block_type,
-            use_dual_skip=use_dual_skip,
-            post_res_bn=post_res_bn,
-        )
-        self.layer3 = self._make_layer(
-            block, 256, layers[2],
-            stride=2,
-            dilate=replace_stride_with_dilation[1],
-            use_bn=use_bn,
-            use_relu=use_relu,
-            skip_last_relu=skip_last_relu,
-            down_block_type=down_block_type,
-            use_dual_skip=use_dual_skip,
-            post_res_bn=post_res_bn,
-        )
-        self.layer4 = self._make_layer(
-            block, 512, layers[3],
-            stride=2,
-            dilate=replace_stride_with_dilation[2],
-            use_bn=use_bn,
-            use_relu=use_relu,
-            skip_last_relu=skip_last_relu,
-            down_block_type=down_block_type,
-            use_dual_skip=use_dual_skip,
-            post_res_bn=post_res_bn,
-        )
-        self.blocks=[self.layer1, self.layer2, self.layer3, self.layer4]
-        self.avgpool = nn.AdaptiveAvgPool2d((1, 1))
+        self.conv1 = DynamicQConvLayer(in_channel_list=3, out_channel_list=64,
+                              kernel_size=3,  use_bn=True, act_func='relu',bits_list=bits_list)
+        #we use a different inputsize than the original paper
+        #so conv2_x's stride is 1
+        self.conv2_x = self._make_layer(block, 64, num_block[0], 1)
+        self.conv3_x = self._make_layer(block, 128, num_block[1], 2)
+        self.conv4_x = self._make_layer(block, 256, num_block[2], 2)
+        self.conv5_x = self._make_layer(block, 512, num_block[3], 2)
+        self.avg_pool = nn.AdaptiveAvgPool2d((1, 1))
         self.fc = DynamicQLinearLayer(in_features_list=512 * block.expansion, out_features=num_classes, bits_list=bits_list)
-        self.soft_max = nn.LogSoftmax(dim=1)
-
-        for m in self.modules():
-            if isinstance(m, nn.Conv2d):
-                nn.init.kaiming_normal_(m.weight, mode="fan_out", nonlinearity="relu")
-            elif isinstance(m, (nn.BatchNorm2d, nn.GroupNorm)):
-                nn.init.constant_(m.weight, 1)
-                nn.init.constant_(m.bias, 0)
-
-        # Zero-initialize the last BN in each residual branch,
-        # so that the residual branch starts with zeros, and each residual block behaves like an identity.
-        # This improves the model by 0.2~0.3% according to https://arxiv.org/abs/1706.02677
-        if zero_init_residual:
-            for m in self.modules():
-                if isinstance(m, Bottleneck):
-                    nn.init.constant_(m.bn3.weight, 0)
-                elif isinstance(m, BasicBlock):
-                    nn.init.constant_(m.bn2.weight, 0)
-
-
-        #mix-precision-specific
+        
+        
         self.flops_table = FLOPsTable()
         self.bits_list = int2list(bits_list, 1)
         self.bits_list.sort()
@@ -298,83 +104,42 @@ class QResNet(nn.Module):
                 self.quantizers.append(m)
                 self.quantizer_dict[n] = m
 
+    def _make_layer(self, block, out_channels, num_blocks, stride, bits_list: List[int] = [2,3,4,32]):
+        """make resnet layers(by layer i didnt mean this 'layer' was the
+        same as a neuron netowork layer, ex. conv layer), one layer may
+        contain more than one residual block
 
-    def _make_layer(self, block, planes, blocks, stride=1, dilate=False,
-            use_bn=True, use_relu=False, skip_last_relu=False, down_block_type="default",
-            use_dual_skip=False, post_res_bn=False):
-        norm_layer = self._norm_layer
-        downsample = None
-        previous_dilation = self.dilation
-        if dilate:
-            self.dilation *= stride
-            stride = 1
-        if stride != 1 or self.inplanes != planes * block.expansion:
-            down_block = {
-                "default": [conv1x1(self.inplanes, planes * block.expansion, stride)],
-                "avgpool": [
-                    nn.AvgPool2d(kernel_size=2, stride=stride),
-                    conv1x1(self.inplanes, planes * block.expansion, 1),
-                ],
-                "conv3x3": [conv3x3(self.inplanes, planes * block.expansion, stride)],
-            }[down_block_type]
-            downsample = nn.Sequential(
-                *down_block,
-                norm_layer(planes * block.expansion)
-                if use_bn and not post_res_bn else nn.Identity(),
-            )
+        Args:
+            block: block type, basic block or bottle neck block
+            out_channels: output depth channel number of this layer
+            num_blocks: how many blocks per layer
+            stride: the stride of the first block of this layer
 
+        Return:
+            return a resnet layer
+        """
+
+        # we have num_block blocks per layer, the first block
+        # could be 1 or 2, other blocks would always be 1
+        strides = [stride] + [1] * (num_blocks - 1)
         layers = []
-        layers.append(
-            block(
-                self.inplanes,
-                planes,
-                stride,
-                downsample,
-                self.groups,
-                self.base_width,
-                previous_dilation,
-                norm_layer,
-                #use_bn=use_bn,
-                #use_relu=use_relu,
-                #skip_last_relu=skip_last_relu,
-                #use_dual_skip=use_dual_skip,
-                #post_res_bn=post_res_bn,
-            )
-        )
-        self.inplanes = planes * block.expansion
-        for _ in range(1, blocks):
-            layers.append(
-                block(
-                    self.inplanes,
-                    planes,
-                    groups=self.groups,
-                    base_width=self.base_width,
-                    dilation=self.dilation,
-                    norm_layer=norm_layer,
-                    #use_bn=use_bn,
-                    #use_relu=use_relu,
-                    #skip_last_relu=skip_last_relu,
-                    #post_res_bn=post_res_bn,
-                )
-            )
+        for stride in strides:
+            layers.append(block(self.in_channels, out_channels, stride))
+            self.in_channels = out_channels * block.expansion
 
         return nn.Sequential(*layers)
 
     def forward(self, x):
-        x = self.first_conv(x)
+        output = self.conv1(x)
+        output = self.conv2_x(output)
+        output = self.conv3_x(output)
+        output = self.conv4_x(output)
+        output = self.conv5_x(output)
+        output = self.avg_pool(output)
+        output = output.view(output.size(0), -1)
+        output = self.fc(output)
 
-        x = self.maxpool(x)
-
-        x = self.layer1(x)
-        x = self.layer2(x)
-        x = self.layer3(x)
-        x = self.layer4(x)
-
-        x = self.avgpool(x)
-        x = x.reshape(x.size(0), -1)
-        x = self.fc(x)
-        x= self.soft_max(x)
-        return x
+        return output
     
     @staticmethod
     def name():
@@ -618,34 +383,17 @@ class QResNet(nn.Module):
 
 
 
-def _qresnet(
-    block: Type[Union[BasicBlock, Bottleneck]],
-    layers: List[int],
-    bits_list: List[int] = [2,3,4,32]
-) -> QResNet:
+def qresnet18():
+    """ return a ResNet 18 object
+    """
+    return QResNet(BasicBlock, [2, 2, 2, 2])
 
+def qresnet34():
+    """ return a ResNet 34 object
+    """
+    return QResNet(BasicBlock, [3, 4, 6, 3])
 
-    model = QResNet(block, layers, bits_list = bits_list)
-
-
-
-    return model
-
-def qresnet18(bits_list: List[int] = [2,3,4,32]) -> QResNet:
- 
-
-
-    return _qresnet(BasicBlock, [2, 2, 2, 2], bits_list)
-
-
-def qresnet34(bits_list: List[int] = [2,3,4,32]):
-
-    return _qresnet(BasicBlock, [3, 4, 6, 3], bits_list)
-
-
-
-def qresnet50(bits_list: List[int] = [2,3,4,32]) -> QResNet:
- 
-
-
-    return _qresnet(Bottleneck, [3, 4, 6, 3],bits_list)
+def qresnet50():
+    """ return a ResNet 50 object
+    """
+    return QResNet(Bottleneck, [3, 4, 6, 3])
