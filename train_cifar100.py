@@ -21,11 +21,12 @@ import torchvision
 import torchvision.transforms as transforms
 
 from torch.utils.data import DataLoader
-from torch.utils.tensorboard import SummaryWriter
+from qfa.imagenet_codebase.utils import cross_entropy_loss_with_soft_target
+
 
 from qfa.cifar100_codebase.conf import settings
 from qfa.cifar100_codebase.utils import get_network, get_training_dataloader, get_test_dataloader, WarmUpLR, \
-    most_recent_folder, most_recent_weights, last_epoch, best_acc_weights
+    most_recent_folder, most_recent_weights, last_epoch, best_acc_weights,build_sub_train_loader
 
 from qfa.elastic_nn.networks import qresnet34
 from qfa.elastic_nn.utils import set_activation_statistics, set_running_statistics
@@ -48,15 +49,15 @@ def train(epoch):
         #uniform
         net.set_sandwich_subnet()
         outputs = net(images)
-        loss = loss_function(outputs, soft_label)
-        loss.backward()
+        loss = cross_entropy_loss_with_soft_target(outputs, soft_label)
+        loss.backward(retain_graph=True)
 
         #random
         subnet_seed = int('%d%.3d%.3d' % (epoch * batch_index, batch_index, 0))
         random.seed(subnet_seed)
         net.sample_active_subnet(subnet_seed=subnet_seed)
         outputs = net(images)
-        loss = loss_function(outputs, soft_label)
+        loss = cross_entropy_loss_with_soft_target(outputs, soft_label)
         loss.backward()
 
 
@@ -66,30 +67,26 @@ def train(epoch):
         n_iter = (epoch - 1) * len(cifar100_training_loader) + batch_index + 1
 
         last_layer = list(net.children())[-1]
-        for name, para in last_layer.named_parameters():
-            if 'weight' in name:
-                writer.add_scalar('LastLayerGradients/grad_norm2_weights', para.grad.norm(), n_iter)
-            if 'bias' in name:
-                writer.add_scalar('LastLayerGradients/grad_norm2_bias', para.grad.norm(), n_iter)
 
-        print('Training Epoch: {epoch} [{trained_samples}/{total_samples}]\tLoss: {:0.4f}\tLR: {:0.6f}'.format(
+        _, predicted = outputs.max(1)
+        total = labels.size(0)
+        correct = predicted.eq(labels).sum().item()
+        print('Training Epoch: {epoch} [{trained_samples}/{total_samples}]\tLoss: {:0.4f}\tLR: {:0.6f}\tacc: {acc}'.format(
             loss.item(),
             optimizer.param_groups[0]['lr'],
             epoch=epoch,
             trained_samples=batch_index * args.b + len(images),
-            total_samples=len(cifar100_training_loader.dataset)
+            total_samples=len(cifar100_training_loader.dataset),
+            acc = 100.*correct/total
         ))
 
         #update training loss for each iteration
-        writer.add_scalar('Train/loss', loss.item(), n_iter)
+   
 
         if epoch <= args.warm:
             warmup_scheduler.step()
 
-    for name, param in net.named_parameters():
-        layer, attr = os.path.splitext(name)
-        attr = attr[1:]
-        writer.add_histogram("{}/{}".format(layer, attr), param, epoch)
+
 
     finish = time.time()
 
@@ -98,19 +95,21 @@ def train(epoch):
 @torch.no_grad()
 def eval_training(epoch=0, tb=True):
 
-    start = time.time()
     net.eval()
 
     test_loss = 0.0 # cost function error
     correct = 0.0
 
+    sub_train_loader = build_sub_train_loader(cifar100_training_loader)
+    
+    net.set_active_subnet(b=2)
+    set_running_statistics(net, sub_train_loader)
     for (images, labels) in cifar100_test_loader:
 
         if args.gpu:
             images = images.cuda()
             labels = labels.cuda()
 
-        net.set_active_subnet(b=32)
         
         outputs = net(images)
         loss = loss_function(outputs, labels)
@@ -119,24 +118,32 @@ def eval_training(epoch=0, tb=True):
         _, preds = outputs.max(1)
         correct += preds.eq(labels).sum()
 
-    finish = time.time()
-    if args.gpu:
-        print('GPU INFO.....')
-        print(torch.cuda.memory_summary(), end='')
-    print('Evaluating Network.....')
-    print('Test set: Epoch: {}, Average loss: {:.4f}, Accuracy: {:.4f}, Time consumed:{:.2f}s'.format(
-        epoch,
-        test_loss / len(cifar100_test_loader.dataset),
-        correct.float() / len(cifar100_test_loader.dataset),
-        finish - start
-    ))
-    print()
 
-    #add informations to tensorboard
-    if tb:
-        writer.add_scalar('Test/Average loss', test_loss / len(cifar100_test_loader.dataset), epoch)
-        writer.add_scalar('Test/Accuracy', correct.float() / len(cifar100_test_loader.dataset), epoch)
-    file = open('result.txt', 'a+')
+    file = open('result_int2.txt', 'a+')
+    file.write(f'{epoch} {test_loss} {correct.float() / len(cifar100_test_loader.dataset)}\n')
+    file.close()
+
+
+    test_loss = 0.0 # cost function error
+    correct = 0.0
+    
+    net.set_active_subnet(b=32)
+    set_running_statistics(net, sub_train_loader)
+    for (images, labels) in cifar100_test_loader:
+
+        if args.gpu:
+            images = images.cuda()
+            labels = labels.cuda()
+
+        
+        outputs = net(images)
+        loss = loss_function(outputs, labels)
+
+        test_loss += loss.item()
+        _, preds = outputs.max(1)
+        correct += preds.eq(labels).sum()
+
+    file = open('result_fp32.txt', 'a+')
     file.write(f'{epoch} {test_loss} {correct.float() / len(cifar100_test_loader.dataset)}\n')
     file.close()
     return correct.float() / len(cifar100_test_loader.dataset)
@@ -144,7 +151,7 @@ def eval_training(epoch=0, tb=True):
 if __name__ == '__main__':
 
     parser = argparse.ArgumentParser()
-    parser.add_argument('-net', type=str,default='resnet34', required=True, help='net type')
+    parser.add_argument('-net', type=str,default='resnet34',  help='net type')
     parser.add_argument('-gpu', action='store_true', default=True, help='use gpu or not')
     parser.add_argument('-b', type=int, default=128, help='batch size for dataloader')
     parser.add_argument('-warm', type=int, default=1, help='warm up training phase')
@@ -153,10 +160,11 @@ if __name__ == '__main__':
     args = parser.parse_args()
 
     teacher = get_network(args)
-    teacher = teacher.cuda()
+    teacher = teacher.to('cuda')
     teacher.load_state_dict(torch.load('resnet34.pth'))
     teacher.eval()
     net = qresnet34()
+    net=net.to('cuda')
     set_activation_statistics(net)
 
     #data preprocessing:
@@ -196,14 +204,6 @@ if __name__ == '__main__':
     if not os.path.exists(settings.LOG_DIR):
         os.mkdir(settings.LOG_DIR)
 
-    #since tensorboard can't overwrite old values
-    #so the only way is to create a new tensorboard log
-    writer = SummaryWriter(log_dir=os.path.join(
-            settings.LOG_DIR, args.net, settings.TIME_NOW))
-    input_tensor = torch.Tensor(1, 3, 32, 32)
-    if args.gpu:
-        input_tensor = input_tensor.cuda()
-    writer.add_graph(net, input_tensor)
 
     #create checkpoint folder to save model
     if not os.path.exists(checkpoint_path):
@@ -238,7 +238,6 @@ if __name__ == '__main__':
         if args.resume:
             if epoch <= resume_epoch:
                 continue
-
         train(epoch)
         acc = eval_training(epoch)
 
@@ -255,4 +254,4 @@ if __name__ == '__main__':
             print('saving weights file to {}'.format(weights_path))
             torch.save(net.state_dict(), weights_path)
 
-    writer.close()
+

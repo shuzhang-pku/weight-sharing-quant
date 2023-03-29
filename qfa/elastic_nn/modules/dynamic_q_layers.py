@@ -193,7 +193,7 @@ class DynamicMBQConvLayer(MyModule):
 
 class DynamicQConvLayer(MyModule):
 
-    def __init__(self, in_channel_list, out_channel_list, bits_list, kernel_size=3, stride=1, dilation=1,
+    def __init__(self, in_channel_list, out_channel_list, bits_list=[2,3,4,32], kernel_size=3, stride=1, dilation=1,
                  use_bn=True, eps=1e-05, momentum=0.1, act_func='relu6', signed=False, per_channel=True):
         super(DynamicQConvLayer, self).__init__()
 

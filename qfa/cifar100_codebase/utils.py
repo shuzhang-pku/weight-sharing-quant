@@ -13,7 +13,7 @@ import torch
 from torch.optim.lr_scheduler import _LRScheduler
 import torchvision
 import torchvision.transforms as transforms
-from torch.utils.data import DataLoader
+from torch.utils.data import DataLoader,sampler
 
 
 def get_network(args):
@@ -163,6 +163,7 @@ def get_network(args):
     return net
 
 
+
 def get_training_dataloader(mean, std, batch_size=16, num_workers=2, shuffle=True):
     """ return training dataloader
     Args:
@@ -306,3 +307,27 @@ def best_acc_weights(weights_folder):
 
     best_files = sorted(best_files, key=lambda w: int(re.search(regex_str, w).groups()[1]))
     return best_files[-1]
+
+
+def build_sub_train_loader(train_loader:DataLoader):
+    
+    batch_size = train_loader.batch_size
+    n_images = 30*batch_size
+    n_samples = len(train_loader.dataset.data)
+    g = torch.Generator()
+    rand_indexes = torch.randperm(n_samples, generator=g).tolist()
+
+    new_train_dataset = train_loader.dataset
+
+    chosen_indexes = rand_indexes[:n_images]
+    sub_sampler = sampler.SubsetRandomSampler(chosen_indexes)
+
+    sub_data_loader = DataLoader(
+        new_train_dataset,
+        sampler=sub_sampler,
+        batch_size=batch_size,
+        num_workers=train_loader.num_workers,
+        pin_memory=True,
+    )
+    return sub_data_loader
+

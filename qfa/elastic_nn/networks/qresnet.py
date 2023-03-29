@@ -22,15 +22,15 @@ class BasicBlock(nn.Module):
     #to distinct
     expansion = 1
 
-    def __init__(self, in_channels, out_channels, stride=1):
+    def __init__(self, in_channels, out_channels, stride=1, bits_list=[2,3,4,32]):
         super().__init__()
 
         #residual function
         self.residual_function = nn.Sequential(
-            DynamicQConvLayer(in_channel_list=in_channels, out_channel_list=out_channels
-                              kernel_size=3, stride=stride, use_bn=use_bn, act_func='relu'),
-            DynamicQConvLayer(in_channel_list=out_channels, out_channel_list=out_channels * BasicBlock.expansion
-                              kernel_size=3, use_bn=use_bn, act_func=None)
+            DynamicQConvLayer(in_channel_list=in_channels, out_channel_list=out_channels,
+                              kernel_size=3, stride=stride, use_bn=True, act_func='relu',bits_list=bits_list),
+            DynamicQConvLayer(in_channel_list=out_channels, out_channel_list=out_channels * BasicBlock.expansion,
+                              kernel_size=3, use_bn=True, act_func=None,bits_list=bits_list)
         )
 
         #shortcut
