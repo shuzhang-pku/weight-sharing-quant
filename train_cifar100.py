@@ -41,17 +41,18 @@ def train(epoch):
             labels = labels.cuda()
             images = images.cuda()
         
-        soft_logits = teacher(images)
-        soft_label = torch.nn.functional.softmax(soft_logits, dim=1)
+        #soft_logits = teacher(images)
+        #soft_label = torch.nn.functional.softmax(soft_logits, dim=1)
 
         optimizer.zero_grad()
 
         #uniform
-        net.set_sandwich_subnet()
+        net.set_sandwich_subnet(fix_bit=2)
         outputs = net(images)
-        loss = cross_entropy_loss_with_soft_target(outputs, soft_label)
+        loss = loss_function(outputs,labels)
         loss.backward(retain_graph=True)
 
+        '''
         #random
         subnet_seed = int('%d%.3d%.3d' % (epoch * batch_index, batch_index, 0))
         random.seed(subnet_seed)
@@ -59,7 +60,7 @@ def train(epoch):
         outputs = net(images)
         loss = cross_entropy_loss_with_soft_target(outputs, soft_label)
         loss.backward()
-
+        '''
 
         torch.nn.utils.clip_grad_norm_(net.parameters(), 500)
         optimizer.step()
@@ -119,11 +120,11 @@ def eval_training(epoch=0, tb=True):
         correct += preds.eq(labels).sum()
 
 
-    file = open('result_int2.txt', 'a+')
+    file = open('result_int.txt', 'a+')
     file.write(f'{epoch} {test_loss} {correct.float() / len(cifar100_test_loader.dataset)}\n')
     file.close()
 
-
+    '''
     test_loss = 0.0 # cost function error
     correct = 0.0
     
@@ -146,6 +147,7 @@ def eval_training(epoch=0, tb=True):
     file = open('result_fp32.txt', 'a+')
     file.write(f'{epoch} {test_loss} {correct.float() / len(cifar100_test_loader.dataset)}\n')
     file.close()
+    '''
     return correct.float() / len(cifar100_test_loader.dataset)
 
 if __name__ == '__main__':
@@ -153,7 +155,7 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     parser.add_argument('-net', type=str,default='resnet34',  help='net type')
     parser.add_argument('-gpu', action='store_true', default=True, help='use gpu or not')
-    parser.add_argument('-b', type=int, default=128, help='batch size for dataloader')
+    parser.add_argument('-b', type=int, default=256, help='batch size for dataloader')
     parser.add_argument('-warm', type=int, default=1, help='warm up training phase')
     parser.add_argument('-lr', type=float, default=0.1, help='initial learning rate')
     parser.add_argument('-resume', action='store_true', default=False, help='resume training')
