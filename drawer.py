@@ -23,8 +23,8 @@ import matplotlib.pyplot as plt
 epoch = range(200)
 plt.plot(epoch,src,c='red',label='fp32')
 plt.plot(epoch,fp32,c='pink',label='fp32_quant')
-plt.plot(epoch,int2,c='purple',label='int2_quant')
-plt.plot(epoch,src_int,c='green',label='int2')
+plt.plot(epoch,int2,c='cyan',label='int2_quant')
+plt.plot(epoch,src_int,c='blue',label='int2')
 plt.legend(loc='best')
 
 plt.xlabel("epoch", fontdict={'size': 16})

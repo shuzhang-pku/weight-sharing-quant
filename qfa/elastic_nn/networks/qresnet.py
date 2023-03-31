@@ -40,7 +40,7 @@ class BasicBlock(nn.Module):
         #use 1*1 convolution to match the dimension
         if stride != 1 or in_channels != BasicBlock.expansion * out_channels:
             self.shortcut = DynamicQConvLayer(in_channel_list=in_channels, out_channel_list=out_channels * BasicBlock.expansion,
-                              kernel_size=1, stride=stride, use_bn=True, act_func=None)
+                              kernel_size=1, stride=stride, use_bn=True, act_func=None, bits_list=bits_list)
 
     def forward(self, x):
         return nn.ReLU(inplace=True)(self.residual_function(x) + self.shortcut(x))
@@ -82,13 +82,13 @@ class QResNet(nn.Module):
         self.in_channels = 64
 
         self.conv1 = DynamicQConvLayer(in_channel_list=3, out_channel_list=64,
-                              kernel_size=3,  use_bn=True, act_func='relu',bits_list=bits_list)
+                              kernel_size=3,  use_bn=True, act_func='relu', bits_list=bits_list)
         #we use a different inputsize than the original paper
         #so conv2_x's stride is 1
-        self.conv2_x = self._make_layer(block, 64, num_block[0], 1)
-        self.conv3_x = self._make_layer(block, 128, num_block[1], 2)
-        self.conv4_x = self._make_layer(block, 256, num_block[2], 2)
-        self.conv5_x = self._make_layer(block, 512, num_block[3], 2)
+        self.conv2_x = self._make_layer(block, 64, num_block[0], 1, bits_list=bits_list)
+        self.conv3_x = self._make_layer(block, 128, num_block[1], 2, bits_list=bits_list)
+        self.conv4_x = self._make_layer(block, 256, num_block[2], 2, bits_list=bits_list)
+        self.conv5_x = self._make_layer(block, 512, num_block[3], 2, bits_list=bits_list)
         self.avg_pool = nn.AdaptiveAvgPool2d((1, 1))
         self.fc = DynamicQLinearLayer(in_features_list=512 * block.expansion, out_features=num_classes, bits_list=bits_list)
         
@@ -124,7 +124,7 @@ class QResNet(nn.Module):
         strides = [stride] + [1] * (num_blocks - 1)
         layers = []
         for stride in strides:
-            layers.append(block(self.in_channels, out_channels, stride))
+            layers.append(block(self.in_channels, out_channels, stride, bits_list))
             self.in_channels = out_channels * block.expansion
 
         return nn.Sequential(*layers)
@@ -388,7 +388,7 @@ def qresnet18():
     """
     return QResNet(BasicBlock, [2, 2, 2, 2])
 
-def qresnet34():
+def qresnet34(bits_list = [2,3,4,32]):
     """ return a ResNet 34 object
     """
     return QResNet(BasicBlock, [3, 4, 6, 3])
