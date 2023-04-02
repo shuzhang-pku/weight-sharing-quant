@@ -47,11 +47,17 @@ def train(epoch):
         optimizer.zero_grad()
 
         #uniform
-        net.set_sandwich_subnet()
+        net.set_sandwich_subnet(fix_bit=max(net.bits_list))
         outputs = net(images)
         loss = cross_entropy_loss_with_soft_target(outputs, soft_label)
         loss.backward(retain_graph=True)
 
+        net.set_sandwich_subnet(fix_bit=min(net.bits_list))
+        outputs = net(images)
+        loss = cross_entropy_loss_with_soft_target(outputs, soft_label)
+        loss.backward(retain_graph=True)
+
+        
         #random
         subnet_seed = int('%d%.3d%.3d' % (epoch * batch_index, batch_index, 0))
         random.seed(subnet_seed)
@@ -59,7 +65,7 @@ def train(epoch):
         outputs = net(images)
         loss = cross_entropy_loss_with_soft_target(outputs, soft_label)
         loss.backward()
-
+        
 
         torch.nn.utils.clip_grad_norm_(net.parameters(), 500)
         optimizer.step()
@@ -96,11 +102,36 @@ def train(epoch):
 def eval_training(epoch=0, tb=True):
 
     net.eval()
-
+ 
     test_loss = 0.0 # cost function error
     correct = 0.0
 
     sub_train_loader = build_sub_train_loader(cifar100_training_loader)
+    
+    net.set_active_subnet(b=8)
+    set_running_statistics(net, sub_train_loader)
+    for (images, labels) in cifar100_test_loader:
+
+        if args.gpu:
+            images = images.cuda()
+            labels = labels.cuda()
+
+        
+        outputs = net(images)
+        loss = loss_function(outputs, labels)
+
+        test_loss += loss.item()
+        _, preds = outputs.max(1)
+        correct += preds.eq(labels).sum()
+
+
+    file = open('result_int8_bits[2,3,4,8]', 'a+')
+    file.write(f'{epoch} {test_loss} {correct.float() / len(cifar100_test_loader.dataset)}\n')
+    file.close()
+
+    
+    test_loss = 0.0 # cost function error
+    correct = 0.0
     
     net.set_active_subnet(b=2)
     set_running_statistics(net, sub_train_loader)
@@ -118,34 +149,10 @@ def eval_training(epoch=0, tb=True):
         _, preds = outputs.max(1)
         correct += preds.eq(labels).sum()
 
-
-    file = open('result_int2.txt', 'a+')
+    file = open('result_int2_bits[2,3,4,8].txt', 'a+')
     file.write(f'{epoch} {test_loss} {correct.float() / len(cifar100_test_loader.dataset)}\n')
     file.close()
-
-
-    test_loss = 0.0 # cost function error
-    correct = 0.0
     
-    net.set_active_subnet(b=32)
-    set_running_statistics(net, sub_train_loader)
-    for (images, labels) in cifar100_test_loader:
-
-        if args.gpu:
-            images = images.cuda()
-            labels = labels.cuda()
-
-        
-        outputs = net(images)
-        loss = loss_function(outputs, labels)
-
-        test_loss += loss.item()
-        _, preds = outputs.max(1)
-        correct += preds.eq(labels).sum()
-
-    file = open('result_fp32.txt', 'a+')
-    file.write(f'{epoch} {test_loss} {correct.float() / len(cifar100_test_loader.dataset)}\n')
-    file.close()
     return correct.float() / len(cifar100_test_loader.dataset)
 
 if __name__ == '__main__':
@@ -153,7 +160,7 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     parser.add_argument('-net', type=str,default='resnet34',  help='net type')
     parser.add_argument('-gpu', action='store_true', default=True, help='use gpu or not')
-    parser.add_argument('-b', type=int, default=128, help='batch size for dataloader')
+    parser.add_argument('-b', type=int, default=256, help='batch size for dataloader')
     parser.add_argument('-warm', type=int, default=1, help='warm up training phase')
     parser.add_argument('-lr', type=float, default=0.1, help='initial learning rate')
     parser.add_argument('-resume', action='store_true', default=False, help='resume training')
@@ -163,7 +170,7 @@ if __name__ == '__main__':
     teacher = teacher.to('cuda')
     teacher.load_state_dict(torch.load('resnet34.pth'))
     teacher.eval()
-    net = qresnet34()
+    net = qresnet34([2,3,4,8])
     net=net.to('cuda')
     set_activation_statistics(net)
 
@@ -186,7 +193,7 @@ if __name__ == '__main__':
 
     loss_function = nn.CrossEntropyLoss()
     optimizer = optim.SGD(net.parameters(), lr=args.lr, momentum=0.9, weight_decay=5e-4)
-    train_scheduler = optim.lr_scheduler.MultiStepLR(optimizer, milestones=settings.MILESTONES, gamma=0.2) #learning rate decay
+    train_scheduler = optim.lr_scheduler.MultiStepLR(optimizer, milestones=settings.MILESTONES, gamma=0.4) #learning rate decay
     iter_per_epoch = len(cifar100_training_loader)
     warmup_scheduler = WarmUpLR(optimizer, iter_per_epoch * args.warm)
 
