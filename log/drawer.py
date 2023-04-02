@@ -10,12 +10,13 @@ def get_acc(file_name, target_list):
     file = open(file_name)
     lines = file.readlines()
     for line in lines:
-        content = line.split()
-        target_list.append(float(content[2]))
+        if not line[0]=='#':
+            content = line.split()
+            target_list.append(float(content[2]))
 
 get_acc('result_fp.txt',src)
-get_acc('result_fp32.txt', fp32)
-get_acc('result_int2.txt', int2)
+get_acc('result_int8_bits[2,3,4,8].txt', fp32)
+get_acc('result_int2_bits[2,3,4,8].txt', int2)
 
 import matplotlib.pyplot as plt
 
