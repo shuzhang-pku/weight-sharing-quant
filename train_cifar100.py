@@ -49,12 +49,16 @@ def train(epoch):
         #uniform
         net.set_sandwich_subnet(fix_bit=max(net.bits_list))
         outputs = net(images)
-        loss = cross_entropy_loss_with_soft_target(outputs, soft_label)
+        loss = loss_function(outputs,labels)*3
+        soft_label = torch.nn.functional.softmax(outputs, dim=1)
         loss.backward(retain_graph=True)
 
         net.set_sandwich_subnet(fix_bit=min(net.bits_list))
         outputs = net(images)
-        loss = cross_entropy_loss_with_soft_target(outputs, soft_label)
+        if epoch>settings.MILESTONES[0]:
+            loss = cross_entropy_loss_with_soft_target(outputs, soft_label)
+        else:
+            loss = loss_function(outputs, labels)
         loss.backward(retain_graph=True)
 
         
@@ -63,7 +67,10 @@ def train(epoch):
         random.seed(subnet_seed)
         net.sample_active_subnet(subnet_seed=subnet_seed)
         outputs = net(images)
-        loss = cross_entropy_loss_with_soft_target(outputs, soft_label)
+        if epoch>settings.MILESTONES[0]:
+            loss = cross_entropy_loss_with_soft_target(outputs, soft_label)
+        else:
+            loss = loss_function(outputs, labels)
         loss.backward()
         
 
@@ -125,7 +132,7 @@ def eval_training(epoch=0, tb=True):
         correct += preds.eq(labels).sum()
 
 
-    file = open('result_int8_bits[2,3,4,8]', 'a+')
+    file = open('result_int8_2stage.txt', 'a+')
     file.write(f'{epoch} {test_loss} {correct.float() / len(cifar100_test_loader.dataset)}\n')
     file.close()
 
@@ -149,7 +156,7 @@ def eval_training(epoch=0, tb=True):
         _, preds = outputs.max(1)
         correct += preds.eq(labels).sum()
 
-    file = open('result_int2_bits[2,3,4,8].txt', 'a+')
+    file = open('result_int2_2stage.txt', 'a+')
     file.write(f'{epoch} {test_loss} {correct.float() / len(cifar100_test_loader.dataset)}\n')
     file.close()
     
@@ -170,7 +177,7 @@ if __name__ == '__main__':
     teacher = teacher.to('cuda')
     teacher.load_state_dict(torch.load('resnet34.pth'))
     teacher.eval()
-    net = qresnet34([2,3,4,8])
+    net = qresnet34([2,3,4,8,32])
     net=net.to('cuda')
     set_activation_statistics(net)
 
@@ -245,6 +252,8 @@ if __name__ == '__main__':
         if args.resume:
             if epoch <= resume_epoch:
                 continue
+        if epoch>settings.MILESTONES[2]:
+            net.bits_list = [2,3,4,8]
         train(epoch)
         acc = eval_training(epoch)
 
@@ -260,5 +269,3 @@ if __name__ == '__main__':
             weights_path = checkpoint_path.format(net=args.net, epoch=epoch, type='regular')
             print('saving weights file to {}'.format(weights_path))
             torch.save(net.state_dict(), weights_path)
-
-

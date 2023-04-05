@@ -22,7 +22,7 @@ class BasicBlock(nn.Module):
     #to distinct
     expansion = 1
 
-    def __init__(self, in_channels, out_channels, stride=1, bits_list=[2,3,4,32]):
+    def __init__(self, in_channels, out_channels, stride=1, bits_list=[2,3,4,8,32]):
         super().__init__()
 
         #residual function
@@ -76,7 +76,7 @@ class Bottleneck(nn.Module):
     
 
 class QResNet(nn.Module):
-    def __init__(self, block, num_block, num_classes=100, bits_list: List[int] = [2,3,4,32]):
+    def __init__(self, block, num_block, num_classes=100, bits_list: List[int] = [2,3,4,8,32]):
         super().__init__()
 
         self.in_channels = 64
@@ -388,10 +388,10 @@ def qresnet18():
     """
     return QResNet(BasicBlock, [2, 2, 2, 2])
 
-def qresnet34(bits_list = [2,3,4,32]):
+def qresnet34(bits_list = [2,3,4,8,32]):
     """ return a ResNet 34 object
     """
-    return QResNet(BasicBlock, [3, 4, 6, 3])
+    return QResNet(BasicBlock, [3, 4, 6, 3], bits_list=bits_list)
 
 def qresnet50():
     """ return a ResNet 50 object
