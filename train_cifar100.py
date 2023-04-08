@@ -20,6 +20,9 @@ import torch.optim as optim
 import torchvision
 import torchvision.transforms as transforms
 
+import torch.distributed as dist
+from torch.nn.parallel import DistributedDataParallel as DDP
+
 from torch.utils.data import DataLoader
 from qfa.imagenet_codebase.utils import cross_entropy_loss_with_soft_target
 
@@ -38,22 +41,20 @@ def train(epoch):
     for batch_index, (images, labels) in enumerate(cifar100_training_loader):
 
         if args.gpu:
-            labels = labels.cuda()
-            images = images.cuda()
+            labels = labels.to(device)
+            images = images.to(device)
         
-        soft_logits = teacher(images)
-        soft_label = torch.nn.functional.softmax(soft_logits, dim=1)
 
         optimizer.zero_grad()
 
         #uniform
-        net.set_sandwich_subnet(fix_bit=max(net.bits_list))
+        net.module.set_sandwich_subnet(fix_bit=max(net.module.bits_list))
         outputs = net(images)
         loss = loss_function(outputs,labels)*3
         soft_label = torch.nn.functional.softmax(outputs, dim=1)
         loss.backward(retain_graph=True)
 
-        net.set_sandwich_subnet(fix_bit=min(net.bits_list))
+        net.module.set_sandwich_subnet(fix_bit=min(net.module.bits_list))
         outputs = net(images)
         if epoch>settings.MILESTONES[0]:
             loss = cross_entropy_loss_with_soft_target(outputs, soft_label)
@@ -65,7 +66,7 @@ def train(epoch):
         #random
         subnet_seed = int('%d%.3d%.3d' % (epoch * batch_index, batch_index, 0))
         random.seed(subnet_seed)
-        net.sample_active_subnet(subnet_seed=subnet_seed)
+        net.module.sample_active_subnet(subnet_seed=subnet_seed)
         outputs = net(images)
         if epoch>settings.MILESTONES[0]:
             loss = cross_entropy_loss_with_soft_target(outputs, soft_label)
@@ -115,13 +116,13 @@ def eval_training(epoch=0, tb=True):
 
     sub_train_loader = build_sub_train_loader(cifar100_training_loader)
     
-    net.set_active_subnet(b=8)
+    net.module.set_active_subnet(b=8)
     set_running_statistics(net, sub_train_loader)
     for (images, labels) in cifar100_test_loader:
 
         if args.gpu:
-            images = images.cuda()
-            labels = labels.cuda()
+            images = images.to(device)
+            labels = labels.to(device)
 
         
         outputs = net(images)
@@ -140,7 +141,7 @@ def eval_training(epoch=0, tb=True):
     test_loss = 0.0 # cost function error
     correct = 0.0
     
-    net.set_active_subnet(b=2)
+    net.module.set_active_subnet(b=2)
     set_running_statistics(net, sub_train_loader)
     for (images, labels) in cifar100_test_loader:
 
@@ -171,14 +172,16 @@ if __name__ == '__main__':
     parser.add_argument('-warm', type=int, default=1, help='warm up training phase')
     parser.add_argument('-lr', type=float, default=0.1, help='initial learning rate')
     parser.add_argument('-resume', action='store_true', default=False, help='resume training')
+    parser.add_argument('--local_rank', default=-1)
     args = parser.parse_args()
+    
+    local_rank = int(args.local_rank)
+    dist.init_process_group(backend='nccl')
 
-    teacher = get_network(args)
-    teacher = teacher.to('cuda')
-    teacher.load_state_dict(torch.load('resnet34.pth'))
-    teacher.eval()
     net = qresnet34([2,3,4,8,32])
-    net=net.to('cuda')
+    device = torch.device("cuda", local_rank)
+    net = torch.nn.SyncBatchNorm.convert_sync_batchnorm(net).to(device)
+    net = DDP(net, device_ids=[local_rank], output_device=local_rank,find_unused_parameters=True)
     set_activation_statistics(net)
 
     #data preprocessing:
