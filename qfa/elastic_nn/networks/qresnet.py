@@ -183,8 +183,10 @@ class QResNet(nn.Module):
                 elif conv_pattern.match(key):
                     new_key = key
                     new_key = new_key.replace('.weight','.conv.conv.weight')
-                elif key == 'fc.0.weight':
+                elif key == 'fc.weight':
                     new_key = 'fc.linear.linear.weight'
+                elif key == 'fc.bias':
+                    new_key = 'fc.linear.linear.bias'
             if new_key:
                 model_dict[new_key] = src_model_dict[key]
             # assert new_key in model_dict, '%s' % new_key
@@ -261,13 +263,8 @@ class QResNet(nn.Module):
             bits_setting = fix_bit
         else:
             bits_setting = random.choice(self.bits_list)
-
         bits_setting = self.set_active_subnet( bits_setting)
-        return {
-
-            'b': bits_setting,
-        }
-
+        return bits_setting
     
 
     def set_constraint(self, include_list, constraint_type='depth'):
@@ -339,10 +336,7 @@ class QResNet(nn.Module):
             bits_setting.append(b)
 
         bits_setting = self.set_active_subnet(bits_setting)
-
-        return {
-            'b': bits_setting,
-        }
+        return bits_setting
 
     #todo未出现过?
     def get_active_subnet(self, preserve_weight=True):

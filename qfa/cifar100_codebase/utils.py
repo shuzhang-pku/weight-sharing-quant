@@ -186,9 +186,9 @@ def get_training_dataloader(mean, std, batch_size=16, num_workers=2, shuffle=Tru
     ])
     #cifar100_training = CIFAR100Train(path, transform=transform_train)
     cifar100_training = torchvision.datasets.CIFAR100(root='/home/zsz/dataset', train=True, download=True, transform=transform_train)
-    train_sampler = torch.utils.data.distributed.DistributedSampler(cifar100_training)
+    #train_sampler = torch.utils.data.distributed.DistributedSampler(cifar100_training)
     cifar100_training_loader = DataLoader(
-        cifar100_training, shuffle=False, num_workers=num_workers, batch_size=batch_size, sampler=train_sampler)
+        cifar100_training, shuffle=shuffle, num_workers=num_workers, batch_size=batch_size)
 
     return cifar100_training_loader
 
