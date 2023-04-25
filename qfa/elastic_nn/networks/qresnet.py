@@ -251,9 +251,13 @@ class QResNet(nn.Module):
     def set_active_subnet(self, b=None):
         bits = int2list(b, len(self.quantizers))
         for i, q in enumerate(self.quantizers):
-            if bits[i] is not None:
+            
+            if type(q) in [DynamicActivationQuantizer]:
+                q.active_bit = 8
+            elif bits[i] is not None:
                 q.active_bit = bits[i]
-
+            
+            q.active_bit = bits[i]
         return self.override_quantizer()
     
     def set_sandwich_subnet(self, mode = 'max', fix_bit = None):

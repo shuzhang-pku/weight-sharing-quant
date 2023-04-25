@@ -317,6 +317,17 @@ class DynamicPointQConv2d(nn.Module):
         # Placeholder for batch stats collection function
         self.collect_batch_stats = None
 
+        self.KERNEL_TRANSFORM_MODE = "WEIGHT"
+        if self.KERNEL_TRANSFORM_MODE is not None:
+            scale_params = {}
+            for i in [2,3,4,8,32]:
+                param_name = "weight_%d" % (i)
+                scale_params["%s_matrix" %param_name] = Parameter(
+                    torch.eye(self.kernel_size**2)
+                )
+            for name, param in scale_params.items():
+                self.register_parameter(name, param)
+
     def reset_running_stats(self):
         self.running_mean.zero_()
         self.running_var.fill_(1)
@@ -326,6 +337,19 @@ class DynamicPointQConv2d(nn.Module):
         self.reset_running_stats()
         init.uniform_(self.gamma)
         init.zeros_(self.beta)
+    
+    def get_active_filter(self, filters):
+        if self.KERNEL_TRANSFORM_MODE is not None:
+            _input_filter = filters.contiguous()
+            _input_filter = _input_filter.view(_input_filter.size(0), _input_filter.size(1), -1)
+            _input_filter = _input_filter.view(-1, _input_filter.size(2))
+            _input_filter = F.linear(
+                _input_filter,
+                self.__getattr__(f"weight_{self.w_quantizer.active_bit}_matrix")
+            )
+            _input_filter = _input_filter.view(filters.size(0), filters.size(1), self.kernel_size ** 2)
+            _input_filter = _input_filter.view(filters.size(0), filters.size(1), self.kernel_size, self.kernel_size)
+        return _input_filter
 
     def forward(self, x, out_channel=None):
         x = self.a_quantizer(x)
@@ -334,6 +358,7 @@ class DynamicPointQConv2d(nn.Module):
             out_channel = self.active_out_channel
         in_channel = x.size(1)
         filters = self.conv.weight
+        filters = self.get_active_filter(filters).contiguous()
         padding = get_same_padding(self.kernel_size)
 
         if self.use_bn:
@@ -390,12 +415,33 @@ class DynamicQLinear(nn.Module):
         self.a_quantizer = DynamicActivationQuantizer(n_channels=max_in_features, signed=signed, bits_list=self.bits_list, per_channel=False)
         self.act = build_activation(act_func)
 
+        self.KERNEL_TRANSFORM_MODE = "WEIGHT"
+        if self.KERNEL_TRANSFORM_MODE is not None:
+            scale_params = {}
+            for i in [2,3,4,8,32]:
+                param_name = "weight_%d" %  (i)
+                scale_params["%s_matrix" %param_name] = Parameter(
+                    torch.eye(self.max_in_features)
+                )
+            for name, param in scale_params.items():
+                self.register_parameter(name, param)
+
+    def get_active_filter(self, filters):
+        if self.KERNEL_TRANSFORM_MODE is not None:
+            _input_filter = filters.contiguous()
+            _input_filter = F.linear(
+                _input_filter,
+                self.__getattr__(f"weight_{self.w_quantizer.active_bit}_matrix"),
+            )
+        return _input_filter
+
     def forward(self, x, out_features=None):
         x = self.a_quantizer(x)
         if out_features is None:
             out_features = self.active_out_features
         in_features = x.size(1)
-        quantized_weight = self.w_quantizer(self.linear.weight)
+        weight =  self.get_active_filter(self.linear.weight).contiguous()
+        quantized_weight = self.w_quantizer(weight)
         active_quantized_weight = quantized_weight[:out_features, :in_features].contiguous()
         bias = self.linear.bias[:out_features] if self.bias else None
         y = F.linear(x, active_quantized_weight, bias)
