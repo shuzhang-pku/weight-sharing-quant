@@ -31,7 +31,7 @@ from qfa.cifar100_codebase.utils import get_network, get_training_dataloader, ge
 from qfa.elastic_nn.networks import qresnet34
 from qfa.elastic_nn.utils import set_activation_statistics, set_running_statistics
 
-os.environ["CUDA_VISIBLE_DEVICES"] = "4"
+os.environ["CUDA_VISIBLE_DEVICES"] = "5"
 
 
 def train(epoch):
@@ -47,9 +47,9 @@ def train(epoch):
         optimizer.zero_grad()
 
         #uniform
-        net.set_sandwich_subnet(fix_bit=8)
+        net.set_sandwich_subnet(fix_bit=4)
         outputs = net(images)
-        loss = loss_function(outputs,labels)*3
+        loss = loss_function(outputs,labels)
         loss.backward()
 
         torch.nn.utils.clip_grad_norm_(net.parameters(), 500)
@@ -94,7 +94,8 @@ def eval_training(epoch=0):
 
     sub_train_loader = build_sub_train_loader(cifar100_training_loader)
     
-    net.set_active_subnet(b=8)
+    
+    net.set_active_subnet(b=4)
     set_running_statistics(net, sub_train_loader)
     for (images, labels) in cifar100_test_loader:
 
@@ -110,32 +111,7 @@ def eval_training(epoch=0):
         _, preds = outputs.max(1)
         correct += preds.eq(labels).sum()
 
-
-    file = open('result_int8_8bit.txt', 'a+')
-    file.write(f'{epoch} {test_loss} {correct.float() / len(cifar100_test_loader.dataset)}\n')
-    file.close()
-
-    
-    test_loss = 0.0 # cost function error
-    correct = 0.0
-    
-    net.set_active_subnet(b=2)
-    set_running_statistics(net, sub_train_loader)
-    for (images, labels) in cifar100_test_loader:
-
-        if args.gpu:
-            images = images.cuda()
-            labels = labels.cuda()
-
-        
-        outputs = net(images)
-        loss = loss_function(outputs, labels)
-
-        test_loss += loss.item()
-        _, preds = outputs.max(1)
-        correct += preds.eq(labels).sum()
-
-    file = open('result_int2_8bit.txt', 'a+')
+    file = open('result_int4_baseline.txt', 'a+')
     file.write(f'{epoch} {test_loss} {correct.float() / len(cifar100_test_loader.dataset)}\n')
     file.close()
     
