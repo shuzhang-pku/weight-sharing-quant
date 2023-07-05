@@ -31,7 +31,7 @@ from qfa.cifar100_codebase.utils import get_network, get_training_dataloader, ge
 from qfa.elastic_nn.networks import qresnet34
 from qfa.elastic_nn.utils import set_activation_statistics, set_running_statistics
 
-os.environ["CUDA_VISIBLE_DEVICES"] = "5"
+os.environ["CUDA_VISIBLE_DEVICES"] = "7"
 
 
 def train(epoch):
@@ -133,7 +133,7 @@ def eval_training(epoch=0):
         correct += preds.eq(labels).sum()
 
 
-    file = open('result_int8_transform_all.txt', 'a+')
+    file = open('result_int8_fixweight_from8.txt', 'a+')
     file.write(f'{epoch} {test_loss} {correct.float() / len(cifar100_test_loader.dataset)}\n')
     file.close()
 
@@ -157,7 +157,7 @@ def eval_training(epoch=0):
         _, preds = outputs.max(1)
         correct += preds.eq(labels).sum()
 
-    file = open('result_int2_transform_all.txt', 'a+')
+    file = open('result_int2_fixweight_from8.txt', 'a+')
     file.write(f'{epoch} {test_loss} {correct.float() / len(cifar100_test_loader.dataset)}\n')
     file.close()
     
@@ -179,12 +179,12 @@ teacher = teacher.to('cuda')
 teacher.load_state_dict(torch.load('resnet34_full.pth'))
 teacher.eval()
 net = qresnet34([2,3,4,8])
-'''
+
 for name, param in net.named_parameters():
     if "conv.weight" in name:
         param.requires_grad=False
-'''
-net.load_state_dict(torch.load('resnet34_quant.pth'))
+
+net.load_state_dict(torch.load('resnet34_8bit.pth'))
 net=net.to('cuda')
 set_activation_statistics(net)
 
